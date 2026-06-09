@@ -5,7 +5,7 @@ UDF Wizard  -  Offline masaüstü uygulaması (modern arayüz)
 Word (.docx) ve PDF (.pdf) <-> UYAP UDF (.udf) çift yönlü dönüştürme.
 
 Çalıştırmak için:  python udf_donusturucu.py
-Gereksinimler   :  pip install customtkinter python-docx pdfplumber reportlab
+Gereksinimler   :  pip install customtkinter tkinterdnd2 python-docx pdfplumber pymupdf reportlab
 (tkinter Python ile birlikte gelir; ek kurulum gerekmez.)
 """
 
@@ -15,6 +15,7 @@ import threading
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
+from tkinterdnd2 import DND_FILES, TkinterDnD
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import udf_core as core
@@ -39,9 +40,10 @@ ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
 
 
-class App(ctk.CTk):
+class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def __init__(self):
         super().__init__()
+        self.TkdndVersion = TkinterDnD._require(self)
         self.title("UDF Wizard")
         self.geometry("680x540")
         self.minsize(620, 500)
@@ -54,7 +56,7 @@ class App(ctk.CTk):
         self._build()
 
     def _build(self):
-        header = ctk.CTkFrame(self, corner_radius=0, fg_color=("#3b5bdb", "#2b3a67"), height=92)
+        header = ctk.CTkFrame(self, corner_radius=0, fg_color=("#db3b3b", "#2b3a67"), height=92)
         header.grid(row=0, column=0, sticky="ew")
         header.grid_columnconfigure(0, weight=1)
         header.grid_propagate(False)
@@ -82,14 +84,18 @@ class App(ctk.CTk):
         ctk.CTkLabel(card1, text="1  •  Dönüştürülecek dosya",
                      font=ctk.CTkFont(size=14, weight="bold")).grid(
                          row=0, column=0, columnspan=2, sticky="w", padx=18, pady=(14, 4))
-        self.lbl_in = ctk.CTkLabel(card1, text="Henüz dosya seçilmedi.",
-                                   font=ctk.CTkFont(size=13), anchor="w",
+        self.lbl_in = ctk.CTkLabel(card1, text="Dosya gezgininden dosya seçin\nveya dosyaları buraya sürükleyip bırakın.",
+                                   font=ctk.CTkFont(size=13), anchor="w", justify="left",
                                    text_color=("#666", "#aaa"))
         self.lbl_in.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 16))
         ctk.CTkButton(card1, text="Dosya Seç  (çoklu)", width=150, height=40,
                       font=ctk.CTkFont(size=13, weight="bold"),
                       corner_radius=10, command=self.pick_input).grid(
                           row=1, column=1, padx=18, pady=(0, 16))
+
+        for w in (card1, self.lbl_in):
+            w.drop_target_register(DND_FILES)
+            w.dnd_bind("<<Drop>>", self._on_drop)
 
         card2 = ctk.CTkFrame(body, corner_radius=14)
         card2.grid(row=1, column=0, sticky="ew", pady=(0, 16))
@@ -140,6 +146,14 @@ class App(ctk.CTk):
                                             filetypes=SUPPORTED_IN)
         if not paths:
             return
+        self._set_input_paths(paths)
+
+    def _on_drop(self, event):
+        paths = [p for p in self.tk.splitlist(event.data) if os.path.isfile(p)]
+        if paths:
+            self._set_input_paths(paths)
+
+    def _set_input_paths(self, paths):
         exts = {os.path.splitext(p)[1].lower() for p in paths}
         if len(exts) > 1:
             messagebox.showerror("Hata", "Toplu dönüştürmede tüm dosyalar aynı türde olmalı "
@@ -224,7 +238,7 @@ class App(ctk.CTk):
             detail = "\n".join("• %s: %s" % (n, m) for n, m in errors[:8])
             extra = ""
             if any("yüklü değil" in m for _, m in errors):
-                extra = "\n\nGerekli kütüphaneyi kurun:\n  pip install customtkinter python-docx pdfplumber reportlab"
+                extra = "\n\nGerekli kütüphaneyi kurun:\n  pip install customtkinter tkinterdnd2 python-docx pdfplumber pymupdf reportlab"
             messagebox.showwarning("Kısmen tamamlandı",
                                    "%d dosya dönüştürüldü.\n\nHatalı dosyalar:\n%s%s" % (ok, detail, extra))
 

@@ -29,6 +29,8 @@ Hizalama (Alignment) kodları: 0=sol, 1=orta, 2=sağ, 3=iki yana yasla
 
 import os
 import re
+import io
+import base64
 import zipfile
 import xml.sax.saxutils as sax
 
@@ -37,6 +39,7 @@ try:
     import docx  # python-docx
     from docx.shared import Pt
     from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
     HAVE_DOCX = True
 except Exception:
     HAVE_DOCX = False
@@ -48,10 +51,22 @@ except Exception:
     HAVE_PDFPLUMBER = False
 
 try:
+    import fitz  # PyMuPDF - PDF içindeki görselleri çıkarmak için
+    HAVE_FITZ = True
+except Exception:
+    HAVE_FITZ = False
+
+try:
+    from PIL import Image as PILImage  # görsellerin piksel boyutunu okumak için
+    HAVE_PIL = True
+except Exception:
+    HAVE_PIL = False
+
+try:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
-    from reportlab.platypus import SimpleDocTemplate, Paragraph as RLParagraph, Spacer
+    from reportlab.platypus import SimpleDocTemplate, Paragraph as RLParagraph, Spacer, Image as RLImage
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
@@ -69,24 +84,43 @@ ALIGN_DOCX_TO_UDF = {
 }
 ALIGN_UDF_TO_DOCX = {0: 0, 1: 1, 2: 2, 3: 3}
 
+IMAGE_PLACEHOLDER = "�"  # UYAP'ın gömülü görseller için içerik metninde bıraktığı yer tutucu karakter
+
+
+def _image_pixel_size(data):
+    """Görsel baytlarından (genişlik, yükseklik) piksel boyutunu döndürür; okunamazsa (None, None)."""
+    if not HAVE_PIL or not data:
+        return None, None
+    try:
+        with PILImage.open(io.BytesIO(data)) as im:
+            return float(im.width), float(im.height)
+    except Exception:
+        return None, None
+
 
 # =====================================================================
 #  UDF YAZMA
 # =====================================================================
 def build_udf_content_xml(paragraphs):
     """
-    paragraphs: list of dict {text, align (0-3), bold (bool)}
+    paragraphs: list of dict.
+      Metin   : {type:"text",  text, align (0-3), bold (bool)}
+      Görsel  : {type:"image", data (bytes), width, height}
     Tek paragrafın tamamı tek biçimde varsayılır (basit ve sağlam model).
     """
     full = ""
     specs = []
     for para in paragraphs:
-        text = para.get("text", "")
         start = len(full)
-        full += text
-        seg_len = len(text)
-        full += "\n"  # her paragraf sonunda newline
-        specs.append((start, seg_len + 1, para.get("align", 0), para.get("bold", False)))
+        if para.get("type") == "image":
+            full += IMAGE_PLACEHOLDER + "\n"
+            specs.append(("image", start, 1, para))
+        else:
+            text = para.get("text", "")
+            full += text
+            seg_len = len(text)
+            full += "\n"  # her paragraf sonunda newline
+            specs.append(("text", start, seg_len + 1, para))
 
     out = []
     out.append('<?xml version="1.0" encoding="UTF-8" ?>')
@@ -97,11 +131,23 @@ def build_udf_content_xml(paragraphs):
                'topMargin="56.7" bottomMargin="56.699999999999974" '
                'paperOrientation="1" headerFOffset="20.0" footerFOffset="20.0" /></properties>')
     out.append('<elements resolver="hvl-default">')
-    for start, length, align, bold in specs:
-        cattr = ('bold="true" ' if bold else '') + 'size="12" family="Times New Roman" '
-        out.append('<paragraph Alignment="%d" resolver="hvl-default">' % align)
-        out.append('<content %sstartOffset="%d" length="%d" />' % (cattr, start, length))
-        out.append('</paragraph>')
+    for kind, start, length, para in specs:
+        if kind == "image":
+            data = para.get("data") or b""
+            w, h = para.get("width"), para.get("height")
+            if w is None or h is None:
+                w, h = _image_pixel_size(data)
+            b64 = base64.encodebytes(data).decode("ascii")
+            out.append('<paragraph>')
+            out.append('<image imageData="%s" width="%s" height="%s" startOffset="%d" length="%d" />'
+                       % (b64, w if w is not None else 0, h if h is not None else 0, start, length))
+            out.append('</paragraph>')
+        else:
+            align, bold = para.get("align", 0), para.get("bold", False)
+            cattr = ('bold="true" ' if bold else '') + 'size="12" family="Times New Roman" '
+            out.append('<paragraph Alignment="%d" resolver="hvl-default">' % align)
+            out.append('<content %sstartOffset="%d" length="%d" />' % (cattr, start, length))
+            out.append('</paragraph>')
     out.append('</elements>')
     out.append('<styles>')
     out.append('<style name="default" description="Geçerli" italic="false" bold="false" '
@@ -124,7 +170,7 @@ def write_udf(paragraphs, out_path):
 #  UDF OKUMA
 # =====================================================================
 def read_udf(path):
-    """UDF -> list of {text, align, bold}"""
+    """UDF -> list of {type:"text", text, align, bold} / {type:"image", data, width, height}"""
     with zipfile.ZipFile(path, "r") as z:
         names = z.namelist()
         cname = "content.xml" if "content.xml" in names else names[0]
@@ -139,6 +185,22 @@ def read_udf(path):
     for pm in re.finditer(r"<paragraph\b([^>]*)>(.*?)</paragraph>", raw, re.S):
         pattr = pm.group(1)
         inner = pm.group(2)
+
+        im = re.search(r'<image\b([^>]*?)/?>', inner, re.S)
+        if im:
+            iattr = im.group(1)
+            dm = re.search(r'imageData\s*=\s*"(.*?)"', iattr, re.S)
+            wm = re.search(r'width\s*=\s*"([\d.]+)"', iattr)
+            hm = re.search(r'height\s*=\s*"([\d.]+)"', iattr)
+            try:
+                data = base64.b64decode(re.sub(r"\s+", "", dm.group(1))) if dm else b""
+            except Exception:
+                data = b""
+            paras.append({"type": "image", "data": data,
+                          "width": float(wm.group(1)) if wm else None,
+                          "height": float(hm.group(1)) if hm else None})
+            continue
+
         am = re.search(r'Alignment="(\d+)"', pattr)
         align = int(am.group(1)) if am else 0
         # Bir paragrafta birden çok <content> parçası olabilir; hepsini birleştir.
@@ -155,30 +217,49 @@ def read_udf(path):
         # paragraf, parçalarının çoğunluğu kalınsa kalın sayılır
         bold = bool(bold_flags) and (sum(bold_flags) * 2 >= len(bold_flags))
         seg = seg.rstrip("\n")
-        paras.append({"text": seg, "align": align, "bold": bold})
+        paras.append({"type": "text", "text": seg, "align": align, "bold": bold})
 
     # elements yoksa düz metni satırlara böl
     if not paras and full_text:
         for line in full_text.split("\n"):
-            paras.append({"text": line, "align": 0, "bold": False})
+            paras.append({"type": "text", "text": line, "align": 0, "bold": False})
     return paras
 
 
 # =====================================================================
 #  DOCX <-> paragraphs
 # =====================================================================
+def _docx_paragraph_images(paragraph):
+    """Bir paragraf içindeki gömülü (inline) görselleri {type, data, width, height} olarak döndürür."""
+    images = []
+    for blip in paragraph._p.findall(".//" + qn("a:blip")):
+        rId = blip.get(qn("r:embed"))
+        if not rId:
+            continue
+        try:
+            data = paragraph.part.related_parts[rId].blob
+        except Exception:
+            continue
+        w, h = _image_pixel_size(data)
+        images.append({"type": "image", "data": data, "width": w, "height": h})
+    return images
+
+
 def docx_to_paragraphs(path):
     if not HAVE_DOCX:
         raise RuntimeError("python-docx yüklü değil")
     d = docx.Document(path)
     paras = []
     for p in d.paragraphs:
+        images = _docx_paragraph_images(p)
+        paras.extend(images)
         text = p.text
-        align = ALIGN_DOCX_TO_UDF.get(int(p.alignment) if p.alignment is not None else None, 0)
-        # paragraf kalın mı: tüm run'lar bold ise kalın say
-        runs = [r for r in p.runs if r.text.strip()]
-        bold = bool(runs) and all(r.bold for r in runs)
-        paras.append({"text": text, "align": align, "bold": bold})
+        if text.strip() or not images:
+            align = ALIGN_DOCX_TO_UDF.get(int(p.alignment) if p.alignment is not None else None, 0)
+            # paragraf kalın mı: tüm run'lar bold ise kalın say
+            runs = [r for r in p.runs if r.text.strip()]
+            bold = bool(runs) and all(r.bold for r in runs)
+            paras.append({"type": "text", "text": text, "align": align, "bold": bold})
     return paras
 
 
@@ -193,6 +274,14 @@ def paragraphs_to_docx(paragraphs, out_path):
     align_map = {0: WD_ALIGN_PARAGRAPH.LEFT, 1: WD_ALIGN_PARAGRAPH.CENTER,
                  2: WD_ALIGN_PARAGRAPH.RIGHT, 3: WD_ALIGN_PARAGRAPH.JUSTIFY}
     for para in paragraphs:
+        if para.get("type") == "image":
+            data = para.get("data")
+            if data:
+                try:
+                    d.add_picture(io.BytesIO(data))
+                except Exception:
+                    pass
+            continue
         p = d.add_paragraph()
         p.alignment = align_map.get(para.get("align", 0), WD_ALIGN_PARAGRAPH.LEFT)
         r = p.add_run(para.get("text", ""))
@@ -207,16 +296,51 @@ def paragraphs_to_docx(paragraphs, out_path):
 # =====================================================================
 #  PDF -> paragraphs  /  paragraphs -> PDF
 # =====================================================================
+def _pdf_page_images(fitz_doc, page_index):
+    """Bir PDF sayfasındaki gömülü görselleri {type, data, width, height} olarak döndürür."""
+    out = []
+    page = fitz_doc[page_index]
+    seen = set()
+    for img in page.get_images(full=True):
+        xref = img[0]
+        if xref in seen:
+            continue
+        seen.add(xref)
+        try:
+            info = fitz_doc.extract_image(xref)
+            data = info.get("image")
+        except Exception:
+            data = None
+        if not data:
+            continue
+        out.append({"type": "image", "data": data,
+                    "width": float(info.get("width") or 0),
+                    "height": float(info.get("height") or 0)})
+    return out
+
+
 def pdf_to_paragraphs(path):
     if not HAVE_PDFPLUMBER:
         raise RuntimeError("pdfplumber yüklü değil")
-    paras = []
-    with pdfplumber.open(path) as pdf:
-        for page in pdf.pages:
-            txt = page.extract_text() or ""
-            for line in txt.split("\n"):
-                paras.append({"text": line, "align": 0, "bold": False})
-    return paras
+    fitz_doc = None
+    if HAVE_FITZ:
+        try:
+            fitz_doc = fitz.open(path)
+        except Exception:
+            fitz_doc = None
+    try:
+        paras = []
+        with pdfplumber.open(path) as pdf:
+            for i, page in enumerate(pdf.pages):
+                txt = page.extract_text() or ""
+                for line in txt.split("\n"):
+                    paras.append({"type": "text", "text": line, "align": 0, "bold": False})
+                if fitz_doc is not None and i < fitz_doc.page_count:
+                    paras.extend(_pdf_page_images(fitz_doc, i))
+        return paras
+    finally:
+        if fitz_doc is not None:
+            fitz_doc.close()
 
 
 def _register_font():
@@ -248,6 +372,26 @@ def paragraphs_to_pdf(paragraphs, out_path):
     align_map = {0: TA_LEFT, 1: TA_CENTER, 2: TA_RIGHT, 3: TA_JUSTIFY}
     story = []
     for para in paragraphs:
+        if para.get("type") == "image":
+            data = para.get("data")
+            if not data:
+                continue
+            w, h = para.get("width") or 0, para.get("height") or 0
+            if not w or not h:
+                w, h = _image_pixel_size(data)
+                w, h = w or 0, h or 0
+            if w and h and w > doc.width:
+                scale = doc.width / w
+                w, h = w * scale, h * scale
+            try:
+                if w and h:
+                    story.append(RLImage(io.BytesIO(data), width=w, height=h))
+                else:
+                    story.append(RLImage(io.BytesIO(data)))
+            except Exception:
+                continue
+            story.append(Spacer(1, 4))
+            continue
         text = sax.escape(para.get("text", "")) or " "
         st = ParagraphStyle(
             "x", fontName=fontname, fontSize=12, leading=16,
