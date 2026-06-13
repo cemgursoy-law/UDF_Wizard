@@ -1,0 +1,7 @@
+customtkinter
+tkinterdnd2
+python-docx
+pdfplumber
+pymupdf
+reportlab
+pillow

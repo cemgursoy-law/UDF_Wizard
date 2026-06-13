@@ -15,10 +15,24 @@ import threading
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
-from tkinterdnd2 import DND_FILES, TkinterDnD
+
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+    HAVE_DND = True
+except ImportError:
+    HAVE_DND = False
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import udf_core as core
+
+_ICO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UDF_LOGO.ico")
+
+if HAVE_DND:
+    class _AppBase(ctk.CTk, TkinterDnD.DnDWrapper):
+        pass
+else:
+    class _AppBase(ctk.CTk):
+        pass
 
 
 SUPPORTED_IN = [("Belgeler", "*.udf *.docx *.pdf"),
@@ -40,13 +54,22 @@ ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
 
 
-class App(ctk.CTk, TkinterDnD.DnDWrapper):
+class App(_AppBase):
     def __init__(self):
         super().__init__()
-        self.TkdndVersion = TkinterDnD._require(self)
+        if HAVE_DND:
+            try:
+                self.TkdndVersion = TkinterDnD._require(self)
+            except Exception:
+                pass
         self.title("UDF Wizard")
         self.geometry("680x540")
         self.minsize(620, 500)
+        if os.path.exists(_ICO):
+            try:
+                self.iconbitmap(_ICO)
+            except Exception:
+                pass
 
         self.in_paths = []
         self._targets = []
@@ -84,7 +107,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         ctk.CTkLabel(card1, text="1  •  Dönüştürülecek dosya",
                      font=ctk.CTkFont(size=14, weight="bold")).grid(
                          row=0, column=0, columnspan=2, sticky="w", padx=18, pady=(14, 4))
-        self.lbl_in = ctk.CTkLabel(card1, text="Dosya gezgininden dosya seçin\nveya dosyaları buraya sürükleyip bırakın.",
+        dnd_hint = ("Dosya gezgininden dosya seçin\nveya dosyaları buraya sürükleyip bırakın."
+                    if HAVE_DND else "Dosya gezgininden dosya seçin.")
+        self.lbl_in = ctk.CTkLabel(card1, text=dnd_hint,
                                    font=ctk.CTkFont(size=13), anchor="w", justify="left",
                                    text_color=("#666", "#aaa"))
         self.lbl_in.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 16))
@@ -93,9 +118,10 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                       corner_radius=10, command=self.pick_input).grid(
                           row=1, column=1, padx=18, pady=(0, 16))
 
-        for w in (card1, self.lbl_in):
-            w.drop_target_register(DND_FILES)
-            w.dnd_bind("<<Drop>>", self._on_drop)
+        if HAVE_DND:
+            for w in (card1, self.lbl_in):
+                w.drop_target_register(DND_FILES)
+                w.dnd_bind("<<Drop>>", self._on_drop)
 
         card2 = ctk.CTkFrame(body, corner_radius=14)
         card2.grid(row=1, column=0, sticky="ew", pady=(0, 16))
@@ -205,6 +231,14 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             jobs = [(ip, os.path.join(out_dir,
                      os.path.splitext(os.path.basename(ip))[0] + target_ext))
                     for ip in self.in_paths]
+            existing = [op for _, op in jobs if os.path.exists(op)]
+            if existing:
+                names = "\n".join(os.path.basename(p) for p in existing[:5])
+                if len(existing) > 5:
+                    names += "\n… ve %d dosya daha" % (len(existing) - 5)
+                if not messagebox.askyesno("Üzerine yaz?",
+                        "%d dosya zaten mevcut:\n%s\n\nÜzerine yazılsın mı?" % (len(existing), names)):
+                    return
 
         self.btn_go.configure(state="disabled")
         self.progress.grid()

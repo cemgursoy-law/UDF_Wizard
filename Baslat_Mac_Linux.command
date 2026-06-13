@@ -1,5 +1,11 @@
 #!/bin/bash
 # UDF Wizard - Mac / Linux baslatici
+#
+# Mac'te "guvenli degil" uyarisi aliyorsaniz:
+#   1. Bu dosyaya sag tiklayin -> Ac -> Ac
+#   VEYA Terminal'de: xattr -d com.apple.quarantine "$(dirname "$0")/Baslat_Mac_Linux.command"
+#   Sonra tekrar calistirin.
+
 cd "$(dirname "$0")"
 APPDIR="$(pwd)"
 
@@ -40,15 +46,13 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
         rm -rf "$ICONSET"
     fi
 
-    # .app bundle olustur (yalnizca bir kez)
+    # .app bundle yapi dosyalari (yalnizca yoksa olustur)
     if [ ! -d "$APP_BUNDLE" ]; then
         mkdir -p "$APP_BUNDLE/Contents/MacOS"
         mkdir -p "$APP_BUNDLE/Contents/Resources"
 
-        # Dock / Finder ikonu
         [ -f "$ICNS" ] && cp "$ICNS" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
-        # Info.plist
         cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -70,38 +74,47 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     <string>APPL</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
 </dict>
 </plist>
 PLIST
-
-        # Terminalsiz baslatici (sessizce paket gunceller, sonra uygulamayi acar)
-        cat > "$APP_BUNDLE/Contents/MacOS/launcher" <<LAUNCHER
-#!/bin/bash
-python3 -m pip install customtkinter tkinterdnd2 python-docx pdfplumber pymupdf reportlab pillow --quiet 2>/dev/null
-exec python3 "$APPDIR/udf_donusturucu.py"
-LAUNCHER
-        chmod +x "$APP_BUNDLE/Contents/MacOS/launcher"
-
-        # Finder onbellegini temizle (ikon hemen gorunsun)
-        touch "$APP_BUNDLE"
-        killall Finder 2>/dev/null || true
     fi
 
+    # Launcher her zaman yeniden olustur (python3 yolu degisebilir)
+    PYTHON3_PATH="$(command -v python3)"
+    mkdir -p "$APP_BUNDLE/Contents/MacOS"
+    cat > "$APP_BUNDLE/Contents/MacOS/launcher" <<LAUNCHER
+#!/bin/bash
+"$PYTHON3_PATH" -m pip install customtkinter tkinterdnd2 python-docx pdfplumber pymupdf reportlab pillow --quiet 2>/dev/null
+exec "$PYTHON3_PATH" "$APPDIR/udf_donusturucu.py"
+LAUNCHER
+    chmod +x "$APP_BUNDLE/Contents/MacOS/launcher"
+
+    # Gatekeeper: proje klasoru ve app bundle'dan karantina etiketini kaldir
+    xattr -cr "$APPDIR" 2>/dev/null || true
+    xattr -cr "$APP_BUNDLE" 2>/dev/null || true
+    # Ad-hoc kod imzasi (Apple Developer hesabi gerekmez, Gatekeeper'i gecmek icin yeterli)
+    codesign --deep --force --sign - "$APP_BUNDLE" 2>/dev/null || true
+
+    # Finder ikonunu yenile
+    touch "$APP_BUNDLE"
+    osascript -e "tell application \"Finder\" to update item POSIX file \"$APP_BUNDLE\" as alias" 2>/dev/null || true
+
 else
-    # Linux: .desktop dosyasi
+    # Linux: .desktop dosyasini her zaman yeniden olustur
+    PYTHON3_PATH="$(command -v python3)"
     SHORTCUT="$DESKTOP/UDF_Wizard.desktop"
-    if [ ! -f "$SHORTCUT" ]; then
-        cat > "$SHORTCUT" <<EOF
+    cat > "$SHORTCUT" <<EOF
 [Desktop Entry]
 Type=Application
 Name=UDF Wizard
-Exec=python3 "$APPDIR/udf_donusturucu.py"
+Exec="$PYTHON3_PATH" "$APPDIR/udf_donusturucu.py"
 Path=$APPDIR
 Icon=$APPDIR/UDF_LOGO.png
 Terminal=false
 EOF
-        chmod +x "$SHORTCUT"
-    fi
+    chmod +x "$SHORTCUT"
 fi
 
 python3 "$APPDIR/udf_donusturucu.py"

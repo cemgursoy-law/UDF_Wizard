@@ -40,7 +40,22 @@ birden çok dosyayı tek seferde seçip bir klasöre dönüştürebilirsiniz).
    ```
 3. `Baslat_Mac_Linux.command` dosyasına çift tıklayın.
    - Gerekli kütüphaneler otomatik kurulur.
-   - Masaüstüne kısayol otomatik oluşturulur (yalnızca ilk seferinde).
+   - Masaüstüne kısayol otomatik oluşturulur.
+
+> **Mac — "Uygulama güvenli değil" / Gatekeeper uyarısı**
+>
+> macOS, Apple imzası olmayan uygulamaları ilk açılışta engeller. **İki yöntemden biri:**
+>
+> **Yöntem 1 — Sağ tıklayarak aç (önerilir):**
+> `Baslat_Mac_Linux.command` dosyasına **sağ tıklayın → Aç → Aç** deyin.
+> İlk açılışta bir kez onaylamanız yeterli; sonraki açılışlarda doğrudan çalışır.
+>
+> **Yöntem 2 — Terminal ile karantina etiketini kaldır:**
+> ```
+> xattr -d com.apple.quarantine "/path/to/Baslat_Mac_Linux.command"
+> ```
+> Sonra dosyaya çift tıklayın. Script, oluşturduğu `.app` bundle'ını da otomatik
+> olarak imzalayıp karantinadan çıkarır.
 
 ---
 
@@ -62,7 +77,7 @@ python udf_core.py belge.udf belge.pdf
 ### Elle kurulum
 
 ```
-pip install customtkinter python-docx pdfplumber reportlab pillow
+pip install -r requirements.txt
 python udf_donusturucu.py
 ```
 

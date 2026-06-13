@@ -37,7 +37,7 @@ import xml.sax.saxutils as sax
 # ---- isteğe bağlı kütüphaneler (uygulama bunlar yoksa da çekirdek kısmı çalışır) ----
 try:
     import docx  # python-docx
-    from docx.shared import Pt
+    from docx.shared import Pt, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml.ns import qn
     HAVE_DOCX = True
@@ -278,7 +278,14 @@ def paragraphs_to_docx(paragraphs, out_path):
             data = para.get("data")
             if data:
                 try:
-                    d.add_picture(io.BytesIO(data))
+                    w_px = para.get("width") or 0
+                    h_px = para.get("height") or 0
+                    max_w = Inches(6)
+                    if w_px and h_px:
+                        natural_w = Inches(w_px / 96.0)
+                        d.add_picture(io.BytesIO(data), width=min(natural_w, max_w))
+                    else:
+                        d.add_picture(io.BytesIO(data), width=max_w)
                 except Exception:
                     pass
             continue
@@ -345,12 +352,14 @@ def pdf_to_paragraphs(path):
 
 def _register_font():
     """Sistemde Türkçe destekli bir TTF bulup reportlab'a kaydet."""
+    windir = os.environ.get("WINDIR", "C:\\Windows")
     candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "C:/Windows/Fonts/times.ttf",
-        "C:/Windows/Fonts/arial.ttf",
+        os.path.join(windir, "Fonts", "times.ttf"),
+        os.path.join(windir, "Fonts", "arial.ttf"),
         "/Library/Fonts/Times New Roman.ttf",
+        "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
     ]
     for c in candidates:
         if os.path.exists(c):

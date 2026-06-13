@@ -16,14 +16,19 @@ if errorlevel 1 (
     exit /b
 )
 
-pip install customtkinter python-docx pdfplumber reportlab pillow --quiet
+pip install customtkinter tkinterdnd2 python-docx pdfplumber pymupdf reportlab pillow --quiet
 
 if not exist "%ICO%" (
     python -c "from PIL import Image; img=Image.open(r'%APPDIR%\UDF_LOGO.png').convert('RGBA'); img.save(r'%ICO%', format='ICO', sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])"
 )
 
-if not exist "%SHORTCUT%" (
-    powershell -NoProfile -Command "$ws=New-Object -ComObject WScript.Shell; $s=$ws.CreateShortcut($env:SHORTCUT); $s.TargetPath='pythonw'; $s.Arguments=\"`\"$env:APP_SCRIPT`\"\"; $s.WorkingDirectory=$env:APPDIR; $s.IconLocation=$env:ICO+',0'; $s.Save()"
-)
+REM pythonw.exe tam yolunu bul
+python -c "import sys,os; open(os.environ['TEMP']+r'\udfwiz.tmp','w').write(os.path.join(os.path.dirname(sys.executable),'pythonw.exe'))"
+set /p PYTHONW_PATH=<%TEMP%\udfwiz.tmp
+del "%TEMP%\udfwiz.tmp" 2>nul
+if not exist "%PYTHONW_PATH%" set "PYTHONW_PATH=pythonw"
+
+REM Kisayolu her zaman yeniden olustur (eski veya bozuk kisayol kalmasin)
+powershell -NoProfile -Command "$ws=New-Object -ComObject WScript.Shell; $s=$ws.CreateShortcut($env:SHORTCUT); $s.TargetPath=$env:PYTHONW_PATH; $s.Arguments=\"`\"$env:APP_SCRIPT`\"\"; $s.WorkingDirectory=$env:APPDIR; $s.IconLocation=$env:ICO+',0'; $s.Save()"
 
 pythonw "%APP_SCRIPT%"
