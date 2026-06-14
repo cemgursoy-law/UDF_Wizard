@@ -91,6 +91,9 @@ exec "$PYTHON3_PATH" "$APPDIR/udf_donusturucu.py"
 LAUNCHER
     chmod +x "$APP_BUNDLE/Contents/MacOS/launcher"
 
+    # Erisim ayricaliklari: bundle icin dogru izinleri ata
+    chmod -R 755 "$APP_BUNDLE" 2>/dev/null || true
+
     # Gatekeeper: proje klasoru ve app bundle'dan karantina etiketini kaldir
     xattr -cr "$APPDIR" 2>/dev/null || true
     xattr -cr "$APP_BUNDLE" 2>/dev/null || true
